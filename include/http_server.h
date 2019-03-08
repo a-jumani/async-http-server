@@ -7,23 +7,24 @@
 
 using boost::asio::ip::tcp;
 
-// run an http server on the specified port
-// details: the server accepts incoming connections asynchronously. These connections are
-//   then sent off to a threadpool to be serviced.
+// run an http server
+// details: the server accepts incoming connections asynchronously.
+//   Boss-workers pattern is employed here, where the workers are
+//   expected to be bound to the io_service running this server.
 class http_server {
 public:
-    // creates a socket and starts listening for connections
+    // creates a listener
     http_server(boost::asio::io_service& io_service, short port)
-        : acceptor_(io_service, tcp::endpoint(tcp::v4(), port)) {
+        : _acceptor(io_service, tcp::endpoint(tcp::v4(), port)) {
             start_accept();
     }
 
 private:
-    // asynchronously accept incoming client connection
+    // accept incoming connections
     void start_accept() {
-        auto new_connection = http_conn::create(acceptor_.get_io_service());
-        
-        acceptor_.async_accept(new_connection->socket(),
+        // asynchronously accept new clients in to the http_conn object
+        auto new_connection = http_conn::create(_acceptor.get_io_service(), &_log);
+        _acceptor.async_accept(new_connection->socket(),
             boost::bind(&http_server::handle_accept, this, new_connection,
             boost::asio::placeholders::error));
     }
@@ -32,16 +33,15 @@ private:
     void handle_accept(http_conn::http_conn_ptr new_connection,
         const boost::system::error_code& error) {
         
-        // send this task to a pool of threads
-        if (!error) {
-            // new_connection->start();
-            acceptor_.get_io_service().post(boost::bind(&http_conn::start, new_connection));
-        }
-
+        // send off client handling to the workers
+        if (!error)
+            _acceptor.get_io_service().post(boost::bind(&http_conn::start, new_connection));
+        
         start_accept();
     }
 
-    tcp::acceptor acceptor_;
+    tcp::acceptor _acceptor;        // to accept connections
+    boost::mutex _log;              // to serialize access to stdout and stderr
 };
 
 #endif
